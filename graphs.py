@@ -314,3 +314,85 @@ alt.Chart(parts.drop(columns=["geometry"])).mark_bar().encode(
 ).properties(width=500)
 
 # %%
+
+airport = airports["LFBO"]
+graph = airport._openstreetmap().network_graph(
+    "geometry",
+    "aeroway",
+    "ref",
+    "name",
+    query_str='aeroway == "taxiway" or aeroway == "runway"',
+)
+ag = AirportGraph(graph, EuroPP()).merge_nodes()
+
+# %%
+g = (
+    f.after(f.resample("1s").next("aligned_on_ils('LFBO')").stop)
+    .query("latitude.notnull()")
+    .resample("1s")
+)
+# %%
+cumul = []
+for edge_data in ag.map_flight(g):
+    shape = ag.buffer_meter(edge_data["geometry"], 18)
+    seg = g.clip(shape)
+    res = edge_data.copy()
+
+    if seg is not None:
+        res["start"] = seg.start
+        res["stop"] = seg.stop
+
+    cumul.append(res)
+
+parts = pd.DataFrame.from_records(cumul)
+# %%
+import altair as alt
+
+alt.Chart(parts.drop(columns=["geometry"])).mark_bar().encode(
+    alt.X("start"),
+    alt.X2("stop"),
+    alt.Y("ref", sort="x", title="Name of the taxiway"),
+    alt.Color("ref", legend=None),
+).properties(width=500)
+
+# %%
+import matplotlib.pyplot as plt
+from cartes import tiles
+from cartes.crs import Mercator, PlateCarree
+from cartopy.mpl.geoaxes import GeoAxes
+
+tiles_ = tiles.Basemaps(variant="light_all")
+ax: GeoAxes
+projection = Mercator.GOOGLE
+fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection=projection))
+
+for u, v, data in ag.graph.edges(data=True):
+    ax.add_geometries(
+        [data["geometry"]],
+        crs=PlateCarree(),
+        facecolor="none",
+        edgecolor="black",
+    )
+
+g.plot(ax=ax, color="#f58518")
+
+pos = dict((node, data["pos"]) for (node, data) in ag.graph.nodes(data=True))
+lon_, lat_ = zip(*pos.values())
+ax.scatter(lon_, lat_, s=10, transform=PlateCarree())
+
+
+for edge_data in ag.map_flight(g):
+    ax.add_geometries(
+        [edge_data["geometry"]],
+        crs=PlateCarree(),
+        facecolor="none",
+        edgecolor="red",
+        lw=1.5,
+    )
+fig
+
+ax.add_image(tiles_, 16)
+ax.set_extent(g, buffer=0.01)
+ax.set_square_ratio(crs=projection)
+ax.spines["geo"].set_visible(False)
+# %%
